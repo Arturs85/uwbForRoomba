@@ -17,23 +17,25 @@ extern "C" {
 
 }
 using namespace std;
+	typedef struct RawTxMessage {char macHeader[10]; char data[127]; int dataLength; } RawTxMessage;
 
 class UwbMsgListener
 {
+
 public:
 static int uart0_filestream;
  pthread_t receivingThreadUwb;
  pthread_t sendingThreadUwb;
- pthread_mutex_t txBufferLock;
+ static pthread_mutex_t txBufferLock;
+ static pthread_mutex_t dwmDeviceLock;
  
 //static pthread_mutex_t mutexSend; 
 static char tx_buffer[];
-static int tx_size;
+static int tx_size;//Unused?
 static struct termios orig_termios;
 static bool isSending;
 static bool isReceivingThreadRunning;
 //size_t rawTxMessageNominalSize = 150;// header+127=?
-typedef struct RawTxMessage {char macHeader[10]; char data[127]; } RawTxMessage;
 static std::deque<RawTxMessage> txDeque;
 
 
@@ -43,12 +45,13 @@ static void initialize();
 static void* receivingLoop(void* arg);
 
 void startReceiving();
+void startSending();
 void stopSending();
 static void readDeviceData();
 
 
 static void* receive(void* arg);
-static void send();
+static void addToTxDeque(std::string msgText);
 
 
 static void* sendingLoop(void* arg);

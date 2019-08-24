@@ -29,7 +29,7 @@
 
 /* Example application name and version to display on LCD screen. */
 #define APP_NAME "UWB Listener"
-
+#define SLEEP_BETWEEN_SENDING_US 100000
 /* Default communication configuration. We use here EVK1000's default mode (mode 3). */
 static dwt_config_t config = {
     2,               /* Channel number. */
@@ -107,6 +107,10 @@ static uint64 get_tx_timestamp_u64(void);
 static uint64 get_rx_timestamp_u64(void);
 static void final_msg_get_ts(const uint8 *ts_field, uint32 *ts);
 
+
+	pthread_mutex_t UwbMsgListener::txBufferLock = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_t UwbMsgListener::dwmDeviceLock = PTHREAD_MUTEX_INITIALIZER;
+std::deque<RawTxMessage> UwbMsgListener::txDeque; 
 //struct termios orig_termios;
 
 struct termios UwbMsgListener::orig_termios;
@@ -292,6 +296,8 @@ void *UwbMsgListener::receivingLoop(void *arg)
     /* Loop forever initiating ranging exchanges. */
     while (isReceivingThreadRunning)
        {
+        	pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
+
         /* Clear reception timeout to start next ranging process. */
         dwt_setrxtimeout(0);
 
@@ -346,34 +352,61 @@ void *UwbMsgListener::receivingLoop(void *arg)
         }
    // usleep(1000000);
 //cout<<"UwbMsgListener thread running"<< cycleCounter++<<"\n";
+   	pthread_mutex_unlock(&dwmDeviceLock); // now sending thread can use device
+
     }
     }
 
 bool UwbMsgListener::isSending =0;
-// starts sending loop
-void UwbMsgListener::send(){
+
+void *UwbMsgListener::sendingLoop(void *arg)
+{
+	while(isSending){
+		pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
+
+	if(!txDeque.empty())// if there is any message for sending
+	{
+			pthread_mutex_unlock(&txBufferLock); //release tx buffer
+
+	pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
+				pthread_mutex_lock(&txBufferLock); //lock tx buffer once dwm is released
+
+	RawTxMessage msg = txDeque.back();
+		dwt_writetxdata(ALL_MSG_COMMON_LEN, (uint8*)msg.macHeader, 0); /* Zero offset in TX buffer. */
+        dwt_writetxdata(ALL_MSG_COMMON_LEN+msg.dataLength+2, (uint8*)msg.data, ALL_MSG_COMMON_LEN); /* header offset in TX buffer. */
+        
+        dwt_writetxfctrl(msg.dataLength+ALL_MSG_COMMON_LEN+2, 0, 0); /* Zero offset in TX buffer, no ranging. */
+    txDeque.pop_back();// delete message after sending it(after writing it to tx buffer) 
+        dwt_starttx(DWT_START_TX_IMMEDIATE );
+	
+	pthread_mutex_unlock(&dwmDeviceLock); //release device for receiving
+
+	}
+	pthread_mutex_unlock(&txBufferLock); //release blocking access to tx buffer
+	usleep(SLEEP_BETWEEN_SENDING_US);
+	}
+	}
+
+void UwbMsgListener::addToTxDeque(std::string msgText){
 	//while(isSending){
 	RawTxMessage msg;
 
-		tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+	tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
 	memcpy(msg.macHeader,tx_poll_msg,ALL_MSG_COMMON_LEN);
-    
-      int datalength = snprintf(msg.data,30,"message nr %d",frame_seq_nb++);
-       // uint8 msge[50];
-	//memcpy(msge,msg.macHeader,ALL_MSG_COMMON_LEN);
-    //memcpy(msge+ALL_MSG_COMMON_LEN,msg.data,datalength);
-    //std::string s((char*)msge);
-    //cout<< s<<"\n";   
-        dwt_writetxdata(ALL_MSG_COMMON_LEN, (uint8*)msg.macHeader, 0); /* Zero offset in TX buffer. */
-        dwt_writetxdata(ALL_MSG_COMMON_LEN+datalength+2, (uint8*)msg.data, ALL_MSG_COMMON_LEN); /* header offset in TX buffer. */
         
-        dwt_writetxfctrl(datalength+ALL_MSG_COMMON_LEN+2, 0, 0); /* Zero offset in TX buffer, no ranging. */
+    snprintf(msg.data,30," --message nr %d",frame_seq_nb++);
+    
+    std::string s((char*)msg.data);
+    //cout<< s<<"\n";   
+    msgText.append(s);
+    
+    memcpy(msg.data, msgText.c_str(),msgText.size() );
+    msg.dataLength = msgText.size();
+	
+	pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
+		txDeque.push_front(msg);
+	pthread_mutex_unlock(&txBufferLock); 
 
-        /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
-         * set by dwt_setrxaftertxdelay() has elapsed. */
-        dwt_starttx(DWT_START_TX_IMMEDIATE );
-	//usleep(1000000);
-	//}
 	}
 
 void UwbMsgListener::stopSending()
@@ -390,23 +423,40 @@ void UwbMsgListener::waitUwbThreadsEnd(){
 		printf("joining receiving thread successful");
 
 			}
+	if(pthread_join(sendingThreadUwb,NULL)){
+		printf("error joining receiving thread");
+		}else
+		{
+		printf("joining sending thread successful");
+
+			}
+	
 	
 	}
 	
 void UwbMsgListener::startReceiving()
 {
-
-
     int iret1 = pthread_create( &receivingThreadUwb, NULL,receivingLoop , 0);
 
     if(iret1)
     {
-        fprintf(stderr,"Error - pthread_create() return code: %d\n",iret1);
+        fprintf(stderr,"Error creating receiving thread return code: %d\n",iret1);
         return;//exit(-1);
     }
-
-
+cout<< "started receiving thread\n";
 }
+void UwbMsgListener::startSending()
+{
+    int iret1 = pthread_create( &sendingThreadUwb, NULL,sendingLoop , 0);
+isSending = 1;
+    if(iret1)
+    {
+        fprintf(stderr,"Error creating sending thread return code: %d\n",iret1);
+        return;//exit(-1);
+    }
+cout<< "started sending thread\n";
+}
+
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @fn final_msg_get_ts()

@@ -30,18 +30,18 @@
 	printf( "enter chars!\n");
 	getline (cin, userCommand);
 	char *ar = &userCommand[0];
-	printf("first char you entered: %d", (uint8_t)(*ar));
+	//printf("first char you entered: %d", (uint8_t)(*ar));
 	//uartTest.setDataToTransmit(ar, userCommand.size());
 	
 	
-	if(!userCommand.compare("send"))
+	if(userCommand.find("send")!=std::string::npos)
 	{
-	uwbMsgListener.send();
+	uwbMsgListener.addToTxDeque(userCommand.substr(4,std::string::npos));
 	}
-	else if(!userCommand.compare("receive"))
+	else if(!userCommand.compare("start"))
 	{
 	uwbMsgListener.startReceiving();
-	
+	uwbMsgListener.startSending();
 	}
 	else if(!userCommand.compare("end"))
 	{
