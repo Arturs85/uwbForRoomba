@@ -26,6 +26,8 @@
 #include <sys/select.h>
 #include <termios.h>
 
+ #include <unistd.h>
+#include <limits.h>
 
 /* Example application name and version to display on LCD screen. */
 #define APP_NAME "UWB Listener"
@@ -244,7 +246,14 @@ usleep(sleepdelayus);
  void UwbMsgListener::initialize()
 {
 
-   
+  
+
+char hostname[HOST_NAME_MAX];
+int res =gethostname(hostname, HOST_NAME_MAX);
+if(!res)
+printf ("device hostname: %s\n",hostname);
+ else
+printf ("unable to get device hostname\n");
 
     //if (argc > 2 && strcmp(argv[1], "average") == 0) {
         //report_average = 1;
