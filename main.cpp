@@ -43,7 +43,11 @@
 	uwbMsgListener.startReceiving();
 	uwbMsgListener.startSending();
 	}
-	else if(!userCommand.compare("end"))
+    else if(!userCommand.compare("dist"))
+    {
+    uwbMsgListener.addToRangingInitDeque(1);
+    }
+    else if(!userCommand.compare("end"))
 	{
 	break;
 	}

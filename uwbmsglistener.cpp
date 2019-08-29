@@ -26,7 +26,7 @@
 #include <sys/select.h>
 #include <termios.h>
 
- #include <unistd.h>
+#include <unistd.h>
 #include <limits.h>
 
 /* Example application name and version to display on LCD screen. */
@@ -51,7 +51,11 @@ static dwt_config_t config = {
 static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
 static uint8 tx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
 static uint8 rx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8 tx_poll_msg[] = {0x41, 0x88, 0x41, 0xCA, 0xDE, 'V', 'I', 'A', 'B', 0x21, 0, 0};
+//static uint8 tx_poll_msg[] = {0x41, 0x88, 0x41, 0xCA, 0xDE, 'V', 'I', 'A', 'B', 0x21, 0, 0};
+//from initiaator.c
+static uint8 tx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
+static uint8 rx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
+static uint8 tx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 /* Length of the common part of the message (up to and including the function code, see NOTE 2 below). */
 #define ALL_MSG_COMMON_LEN 10
 /* Index to access some of the fields in the frames involved in the process. */
@@ -75,16 +79,28 @@ static uint32 status_reg = 0;
  * 1 uus = 512 / 499.2 �s and 1 �s = 499.2 * 128 dtu. */
 #define UUS_TO_DWT_TIME 65536
 
+//from responder.c
 /* Delay between frames, in UWB microseconds. See NOTE 4 below. */
 /* This is the delay from Frame RX timestamp to TX reply timestamp used for calculating/setting the DW1000's delayed TX function. This includes the
  * frame length of approximately 2.46 ms with above configuration. */
-#define POLL_RX_TO_RESP_TX_DLY_UUS 2600
+#define POLL_RX_TO_RESP_TX_DLY_UUS 5000//2800//2600
 /* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
-#define RESP_TX_TO_FINAL_RX_DLY_UUS 500
+#define RESP_TX_TO_FINAL_RX_DLY_UUS 700//500
 /* Receive final timeout. See NOTE 5 below. */
-#define FINAL_RX_TIMEOUT_UUS 3300
+#define FINAL_RX_TIMEOUT_UUS 5000//3300
 /* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
-#define PRE_TIMEOUT 8
+#define PRE_TIMEOUT 64
+
+//from initiator.c
+/* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
+#define POLL_TX_TO_RESP_RX_DLY_UUS 1000//150
+/* This is the delay from Frame RX timestamp to TX reply timestamp used for calculating/setting the DW1000's delayed TX function. This includes the
+ * frame length of approximately 2.66 ms with above configuration. */
+#define RESP_RX_TO_FINAL_TX_DLY_UUS 5000//3100
+/* Receive response timeout. See NOTE 5 below. */
+#define RESP_RX_TIMEOUT_UUS 5000//2900//2700
+/* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
+#define PRE_TIMEOUT 64//8
 
 #define TX_ANT_DLY 16436
 #define RX_ANT_DLY 16436
@@ -110,9 +126,13 @@ static uint64 get_rx_timestamp_u64(void);
 static void final_msg_get_ts(const uint8 *ts_field, uint32 *ts);
 
 
-	pthread_mutex_t UwbMsgListener::txBufferLock = PTHREAD_MUTEX_INITIALIZER;
-	pthread_mutex_t UwbMsgListener::dwmDeviceLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t UwbMsgListener::txBufferLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t UwbMsgListener::dwmDeviceLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t UwbMsgListener::rangingInitBufferLock = PTHREAD_MUTEX_INITIALIZER;
+
 std::deque<RawTxMessage> UwbMsgListener::txDeque; 
+std::deque<int> UwbMsgListener::rangingInitDeque;
+
 //struct termios orig_termios;
 
 struct termios UwbMsgListener::orig_termios;
@@ -146,123 +166,123 @@ int UwbMsgListener::kbhit()
 }
 
 // uint8 report_average = 0;
-  //  float sample_buffer[200] = {0};
-   // int next_sample_pos = 0, total_sample_count = 0, max_sample_count = 0;
+//  float sample_buffer[200] = {0};
+// int next_sample_pos = 0, total_sample_count = 0, max_sample_count = 0;
 
 UwbMsgListener::UwbMsgListener()
-	{
-	}
-	UwbMsgListener::~UwbMsgListener()
-	{
-	}
+{
+}
+UwbMsgListener::~UwbMsgListener()
+{
+}
 
 
 void UwbMsgListener::readDeviceData(){
-int sleepdelayus = 10;	
-uint32 lotid = dwt_getlotid();
-uint32 partid = dwt_getpartid();
+    int sleepdelayus = 10;
+    uint32 lotid = dwt_getlotid();
+    uint32 partid = dwt_getpartid();
 
-printf("Lot ID: %x, Part ID: %x\n",lotid,partid);
+    printf("Lot ID: %x, Part ID: %x\n",lotid,partid);
 
-uint8 euiVal[8]={0,0,0,0,0,0,0,0};
+    uint8 euiVal[8]={0,0,0,0,0,0,0,0};
 
-dwt_geteui(&euiVal[0]);
+    dwt_geteui(&euiVal[0]);
 
-printf("EUI: %x %x %x %x %x %x %x %x\n",euiVal[0],euiVal[1],euiVal[2],euiVal[3],euiVal[4],euiVal[5],euiVal[6],euiVal[7]);
+    printf("EUI: %x %x %x %x %x %x %x %x\n",euiVal[0],euiVal[1],euiVal[2],euiVal[3],euiVal[4],euiVal[5],euiVal[6],euiVal[7]);
 
-uint16 p = 0x1234;
-//dwt_setpanid(p); 
+    uint16 p = 0x1234;
+    //dwt_setpanid(p);
 
-//dwt_write16bitoffsetreg(0x03, PANADR_PAN_ID_OFFSET, p) ;
-usleep(1);
-uint16 panId =0;
-panId= dwt_read16bitoffsetreg(PANADR_ID,PANADR_PAN_ID_OFFSET);
-printf("PAN ID h: %x\n",panId);
-usleep(1);
+    //dwt_write16bitoffsetreg(0x03, PANADR_PAN_ID_OFFSET, p) ;
+    usleep(1);
+    uint16 panId =0;
+    panId= dwt_read16bitoffsetreg(PANADR_ID,PANADR_PAN_ID_OFFSET);
+    printf("PAN ID h: %x\n",panId);
+    usleep(1);
 
-uint16 shortAdr = dwt_read16bitoffsetreg(PANADR_ID, PANADR_SHORT_ADDR_OFFSET);
-printf("Short adress h: %x\n",shortAdr);
-usleep(sleepdelayus);
+    uint16 shortAdr = dwt_read16bitoffsetreg(PANADR_ID, PANADR_SHORT_ADDR_OFFSET);
+    printf("Short adress h: %x\n",shortAdr);
+    usleep(sleepdelayus);
 
-uint32 sysConfig = dwt_read32bitoffsetreg(SYS_CFG_ID, 0);
-printf("System configuration h: %x\n",sysConfig);
-usleep(sleepdelayus);
+    uint32 sysConfig = dwt_read32bitoffsetreg(SYS_CFG_ID, 0);
+    printf("System configuration h: %x\n",sysConfig);
+    usleep(sleepdelayus);
 
-uint32 txFctrl1 = dwt_read32bitoffsetreg(TX_FCTRL_ID,0);
-printf("Tarnsmit frame control 1 h: %x\n",txFctrl1);
-usleep(sleepdelayus);
+    uint32 txFctrl1 = dwt_read32bitoffsetreg(TX_FCTRL_ID,0);
+    printf("Tarnsmit frame control 1 h: %x\n",txFctrl1);
+    usleep(sleepdelayus);
 
-uint32 txFctrl2 = dwt_read32bitoffsetreg(TX_FCTRL_ID,4);
-printf("Tarnsmit frame control 2 h: %x\n",txFctrl2);
-usleep(sleepdelayus);
+    uint32 txFctrl2 = dwt_read32bitoffsetreg(TX_FCTRL_ID,4);
+    printf("Tarnsmit frame control 2 h: %x\n",txFctrl2);
+    usleep(sleepdelayus);
 
-uint16 rxFwto = dwt_read16bitoffsetreg(RX_FWTO_ID,RX_FWTO_OFFSET);
-printf("Receive frame wait timeout period h: %x\n",rxFwto);
-usleep(sleepdelayus);
+    uint16 rxFwto = dwt_read16bitoffsetreg(RX_FWTO_ID,RX_FWTO_OFFSET);
+    printf("Receive frame wait timeout period h: %x\n",rxFwto);
+    usleep(sleepdelayus);
 
-uint32 sysCtrl = dwt_read32bitoffsetreg(SYS_CTRL_ID,0);
-printf("System control register h: %x\n",sysCtrl);
-usleep(sleepdelayus);
+    uint32 sysCtrl = dwt_read32bitoffsetreg(SYS_CTRL_ID,0);
+    printf("System control register h: %x\n",sysCtrl);
+    usleep(sleepdelayus);
 
-uint32 sysMask = dwt_read32bitoffsetreg(SYS_MASK_ID,0);
-printf("System event mask register h: %x\n",sysMask);
-usleep(sleepdelayus);
+    uint32 sysMask = dwt_read32bitoffsetreg(SYS_MASK_ID,0);
+    printf("System event mask register h: %x\n",sysMask);
+    usleep(sleepdelayus);
 
-uint32 sysStatus1 = dwt_read32bitoffsetreg(SYS_STATUS_ID,0);
-printf("System event status register 1 h: %x\n",sysStatus1);
-usleep(sleepdelayus);
+    uint32 sysStatus1 = dwt_read32bitoffsetreg(SYS_STATUS_ID,0);
+    printf("System event status register 1 h: %x\n",sysStatus1);
+    usleep(sleepdelayus);
 
-uint32 sysStatus2 = dwt_read32bitoffsetreg(SYS_STATUS_ID,4);
-printf("System event status register 2 h: %x\n",sysStatus2);
-usleep(sleepdelayus);
+    uint32 sysStatus2 = dwt_read32bitoffsetreg(SYS_STATUS_ID,4);
+    printf("System event status register 2 h: %x\n",sysStatus2);
+    usleep(sleepdelayus);
 
-uint32 sysState1 = dwt_read32bitoffsetreg(SYS_STATE_ID,0);
-printf("System state information 1 h: %x\n",sysState1);
-usleep(sleepdelayus);
+    uint32 sysState1 = dwt_read32bitoffsetreg(SYS_STATE_ID,0);
+    printf("System state information 1 h: %x\n",sysState1);
+    usleep(sleepdelayus);
 
-uint32 sysState2 = dwt_read32bitoffsetreg(SYS_STATE_ID,4);
-printf("System state information 2 h: %x\n",sysState2);
-usleep(sleepdelayus);
+    uint32 sysState2 = dwt_read32bitoffsetreg(SYS_STATE_ID,4);
+    printf("System state information 2 h: %x\n",sysState2);
+    usleep(sleepdelayus);
 
-uint32 ackRespTime = dwt_read32bitoffsetreg(ACK_RESP_T_ID,0);
-printf("Acknowledgement time and response time h: %x\n",ackRespTime);
-usleep(sleepdelayus);
+    uint32 ackRespTime = dwt_read32bitoffsetreg(ACK_RESP_T_ID,0);
+    printf("Acknowledgement time and response time h: %x\n",ackRespTime);
+    usleep(sleepdelayus);
 
-uint32 rxSniff = dwt_read32bitoffsetreg(RX_SNIFF_ID,0);
-printf("Pulsed preamble reception config h: %x\n",rxSniff);
-usleep(sleepdelayus);
+    uint32 rxSniff = dwt_read32bitoffsetreg(RX_SNIFF_ID,0);
+    printf("Pulsed preamble reception config h: %x\n",rxSniff);
+    usleep(sleepdelayus);
 
-uint32 txPower = dwt_read32bitoffsetreg(TX_POWER_ID,0);
-printf("Tx power control h: %x\n",txPower);
-usleep(sleepdelayus);
+    uint32 txPower = dwt_read32bitoffsetreg(TX_POWER_ID,0);
+    printf("Tx power control h: %x\n",txPower);
+    usleep(sleepdelayus);
 
-uint32 chanelControl = dwt_read32bitoffsetreg(CHAN_CTRL_ID,0);
-printf("Channel controlh: %x\n",chanelControl);
-usleep(sleepdelayus);
+    uint32 chanelControl = dwt_read32bitoffsetreg(CHAN_CTRL_ID,0);
+    printf("Channel controlh: %x\n",chanelControl);
+    usleep(sleepdelayus);
 
 
-	}
+}
 
- void UwbMsgListener::initialize()
+void UwbMsgListener::initialize()
 {
 
-  
 
-char hostname[HOST_NAME_MAX];
-int res =gethostname(hostname, HOST_NAME_MAX);
-if(!res)
-printf ("device hostname: %s\n",hostname);
- else
-printf ("unable to get device hostname\n");
+
+    char hostname[HOST_NAME_MAX];
+    int res =gethostname(hostname, HOST_NAME_MAX);
+    if(!res)
+        printf ("device hostname: %s\n",hostname);
+    else
+        printf ("unable to get device hostname\n");
 
     //if (argc > 2 && strcmp(argv[1], "average") == 0) {
-        //report_average = 1;
-        //set_conio_terminal_mode();
-        //max_sample_count = atoi(argv[2]);
-        //if (max_sample_count < 1 || max_sample_count > 200) {
-            //printf("Sample count must be between 1 and 200!\n");
-            //return(1);
-        //}
+    //report_average = 1;
+    //set_conio_terminal_mode();
+    //max_sample_count = atoi(argv[2]);
+    //if (max_sample_count < 1 || max_sample_count > 200) {
+    //printf("Sample count must be between 1 and 200!\n");
+    //return(1);
+    //}
     //}
     /* Start with board specific hardware init. */
     peripherals_init();
@@ -281,11 +301,11 @@ printf ("unable to get device hostname\n");
         return;
     }
     spi_set_rate_high();
-readDeviceData();
+    readDeviceData();
     /* Configure DW1000. See NOTE 7 below. */
     dwt_configure(&config);
 
-readDeviceData();
+    readDeviceData();
     /* Apply default antenna delay value. See NOTE 1 below. */
     dwt_setrxantennadelay(RX_ANT_DLY);
     dwt_settxantennadelay(TX_ANT_DLY);
@@ -299,13 +319,13 @@ bool UwbMsgListener::isReceivingThreadRunning =1;
 
 void *UwbMsgListener::receivingLoop(void *arg)
 {
-  clock_t t;
-   initialize();
-   uint32_t cycleCounter= 0;
+    clock_t t;
+    initialize();
+    uint32_t cycleCounter= 0;
     /* Loop forever initiating ranging exchanges. */
     while (isReceivingThreadRunning)
-       {
-        	pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
+    {
+        pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
 
         /* Clear reception timeout to start next ranging process. */
         dwt_setrxtimeout(0);
@@ -336,17 +356,19 @@ void *UwbMsgListener::receivingLoop(void *arg)
             /* Check that the frame is a poll sent by "DS TWR initiator" example.
              * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
             rx_buffer[ALL_MSG_SN_IDX] = 0;
-           
-            //if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0)
+
+            if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0)
+                respondToRangingRequest();
+            else
             {
-              std::size_t length = frame_len;
-               char* rxData = reinterpret_cast<char*>(rx_buffer);
-               string rxString= string(rxData,length);
+                std::size_t length = frame_len;
+                char* rxData = reinterpret_cast<char*>(rx_buffer);
+                string rxString= string(rxData,length);
                 cout<<"rx: "<<rxString<<"\n";
-                             
-                    t = clock();
-//usleep(100000);
-                    
+
+                t = clock();
+                //usleep(100000);
+
             }
         }
         else
@@ -356,93 +378,321 @@ void *UwbMsgListener::receivingLoop(void *arg)
 
             /* Reset RX to properly reinitialise LDE operation. */
             dwt_rxreset();
-     //               cout<<"rx error/timeout \n";
+            //               cout<<"rx error/timeout \n";
 
         }
-   // usleep(1000000);
-//cout<<"UwbMsgListener thread running"<< cycleCounter++<<"\n";
-   	pthread_mutex_unlock(&dwmDeviceLock); // now sending thread can use device
+        // usleep(1000000);
+        //cout<<"UwbMsgListener thread running"<< cycleCounter++<<"\n";
+        pthread_mutex_unlock(&dwmDeviceLock); // now sending thread can use device
 
     }
-    }
+}
 
 bool UwbMsgListener::isSending =0;
 
 void *UwbMsgListener::sendingLoop(void *arg)
 {
-	while(isSending){
-		pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
+    while(isSending){
+        pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
 
-	if(!txDeque.empty())// if there is any message for sending
-	{
-			pthread_mutex_unlock(&txBufferLock); //release tx buffer
+        if(!txDeque.empty())// if there is any message for sending
+        {
+            pthread_mutex_unlock(&txBufferLock); //release tx buffer
 
-	pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
-				pthread_mutex_lock(&txBufferLock); //lock tx buffer once dwm is released
+            pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
+            pthread_mutex_lock(&txBufferLock); //lock tx buffer once dwm is released
 
-	RawTxMessage msg = txDeque.back();
-		dwt_writetxdata(ALL_MSG_COMMON_LEN, (uint8*)msg.macHeader, 0); /* Zero offset in TX buffer. */
-        dwt_writetxdata(ALL_MSG_COMMON_LEN+msg.dataLength+2, (uint8*)msg.data, ALL_MSG_COMMON_LEN); /* header offset in TX buffer. */
-        
-        dwt_writetxfctrl(msg.dataLength+ALL_MSG_COMMON_LEN+2, 0, 0); /* Zero offset in TX buffer, no ranging. */
-    txDeque.pop_back();// delete message after sending it(after writing it to tx buffer) 
-        dwt_starttx(DWT_START_TX_IMMEDIATE );
-	
-	pthread_mutex_unlock(&dwmDeviceLock); //release device for receiving
+            RawTxMessage msg = txDeque.back();
+            dwt_writetxdata(ALL_MSG_COMMON_LEN, (uint8*)msg.macHeader, 0); /* Zero offset in TX buffer. */
+            dwt_writetxdata(ALL_MSG_COMMON_LEN+msg.dataLength+2, (uint8*)msg.data, ALL_MSG_COMMON_LEN); /* header offset in TX buffer. */
 
-	}
-	pthread_mutex_unlock(&txBufferLock); //release blocking access to tx buffer
-	usleep(SLEEP_BETWEEN_SENDING_US);
-	}
-	}
+            dwt_writetxfctrl(msg.dataLength+ALL_MSG_COMMON_LEN+2, 0, 0); /* Zero offset in TX buffer, no ranging. */
+            txDeque.pop_back();// delete message after sending it(after writing it to tx buffer)
+            dwt_starttx(DWT_START_TX_IMMEDIATE );
+
+            pthread_mutex_unlock(&dwmDeviceLock); //release device for receiving
+
+        }
+        pthread_mutex_unlock(&txBufferLock); //release blocking access to tx buffer
+        //initiate ranging if there is any requests
+
+        pthread_mutex_lock(&rangingInitBufferLock); //take and block access to ranging initation Deque buffer
+        if(!rangingInitDeque.empty()){
+
+            int rangingTargetNr = rangingInitDeque.back();
+            rangingInitDeque.pop_back();// remove ranging request
+            pthread_mutex_unlock(&rangingInitBufferLock); //release blocking access to ranging initation Deque  buffer
+
+            pthread_mutex_lock(&dwmDeviceLock); //wait until device is free to use
+
+            initiateRanging();// later target will be added as parameter
+
+            pthread_mutex_unlock(&dwmDeviceLock); //release device for receiving
+
+        }
+        else
+        pthread_mutex_unlock(&rangingInitBufferLock); //release blocking access to ranging initation Deque  buffer
+
+        usleep(SLEEP_BETWEEN_SENDING_US);
+    }
+}
 
 void UwbMsgListener::addToTxDeque(std::string msgText){
-	//while(isSending){
-	RawTxMessage msg;
+    //while(isSending){
+    RawTxMessage msg;
 
-	tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-	memcpy(msg.macHeader,tx_poll_msg,ALL_MSG_COMMON_LEN);
-        
+    tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    memcpy(msg.macHeader,tx_poll_msg,ALL_MSG_COMMON_LEN);
+
     snprintf(msg.data,30," --message nr %d",frame_seq_nb++);
     
     std::string s((char*)msg.data);
-    //cout<< s<<"\n";   
+    //cout<< s<<"\n";
     msgText.append(s);
     
     memcpy(msg.data, msgText.c_str(),msgText.size() );
     msg.dataLength = msgText.size();
-	
-	pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
-		txDeque.push_front(msg);
-	pthread_mutex_unlock(&txBufferLock); 
 
-	}
+    pthread_mutex_lock(&txBufferLock); //take and block access to tx buffer
+    txDeque.push_front(msg);
+    pthread_mutex_unlock(&txBufferLock);
+
+}
+
+void UwbMsgListener::addToRangingInitDeque(int rangingTarget)
+{
+    pthread_mutex_lock(&rangingInitBufferLock); //take and block access to tx buffer
+    rangingInitDeque.push_front(rangingTarget);
+    pthread_mutex_unlock(&rangingInitBufferLock);
+
+}
+
+void UwbMsgListener::respondToRangingRequest()
+{
+    uint32 resp_tx_time;
+    int ret;
+    printf("resp received poll msg\n");
+
+    /* Retrieve poll reception timestamp. */
+    poll_rx_ts = get_rx_timestamp_u64();
+
+    /* Set send time for response. See NOTE 9 below. */
+    resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+    dwt_setdelayedtrxtime(resp_tx_time);
+
+    /* Set expected delay and timeout for final message reception. See NOTE 4 and 5 below. */
+    dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
+    dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
+
+    /* Write and send the response message. See NOTE 10 below.*/
+    tx_resp_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0); /* Zero offset in TX buffer. */
+    dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
+    ret = dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+
+    /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. See NOTE 11 below. */
+    if (ret == DWT_ERROR)
+    {
+        printf("tx1 err\n");
+        continue;
+    }
+
+    /* Poll for reception of expected "final" frame or error/timeout. See NOTE 8 below. */
+    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
+    { };
+    printf("statusReg h: %x mask: %x\n",status_reg,(SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR));
+
+    /* Increment frame sequence number after transmission of the response message (modulo 256). */
+    frame_seq_nb++;
+
+    if (status_reg & SYS_STATUS_RXFCG)
+    {
+        /* Clear good RX frame event and TX frame sent in the DW1000 status register. */
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG | SYS_STATUS_TXFRS);
+        printf("final msg received\n");
+
+        /* A frame has been received, read it into the local buffer. */
+        frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_MASK;
+        if (frame_len <= RX_BUF_LEN)
+        {
+            dwt_readrxdata(rx_buffer, frame_len, 0);
+        }
+
+        /* Check that the frame is a final message sent by "DS TWR initiator" example.
+                       * As the sequence number field of the frame is not used in this example, it can be zeroed to ease the validation of the frame. */
+        rx_buffer[ALL_MSG_SN_IDX] = 0;
+        if (memcmp(rx_buffer, rx_final_msg, ALL_MSG_COMMON_LEN) == 0)
+        {
+            uint32 poll_tx_ts, resp_rx_ts, final_tx_ts;
+            uint32 poll_rx_ts_32, resp_tx_ts_32, final_rx_ts_32;
+            double Ra, Rb, Da, Db;
+            int64 tof_dtu;
+
+            /* Retrieve response transmission and final reception timestamps. */
+            resp_tx_ts = get_tx_timestamp_u64();
+            final_rx_ts = get_rx_timestamp_u64();
+
+            /* Get timestamps embedded in the final message. */
+            final_msg_get_ts(&rx_buffer[FINAL_MSG_POLL_TX_TS_IDX], &poll_tx_ts);
+            final_msg_get_ts(&rx_buffer[FINAL_MSG_RESP_RX_TS_IDX], &resp_rx_ts);
+            final_msg_get_ts(&rx_buffer[FINAL_MSG_FINAL_TX_TS_IDX], &final_tx_ts);
+
+            /* Compute time of flight. 32-bit subtractions give correct answers even if clock has wrapped. See NOTE 12 below. */
+            poll_rx_ts_32 = (uint32)poll_rx_ts;
+            resp_tx_ts_32 = (uint32)resp_tx_ts;
+            final_rx_ts_32 = (uint32)final_rx_ts;
+            Ra = (double)(resp_rx_ts - poll_tx_ts);
+            Rb = (double)(final_rx_ts_32 - resp_tx_ts_32);
+            Da = (double)(final_tx_ts - resp_rx_ts);
+            Db = (double)(resp_tx_ts_32 - poll_rx_ts_32);
+            tof_dtu = (int64)((Ra * Rb - Da * Db) / (Ra + Rb + Da + Db));
+
+            tof = tof_dtu * DWT_TIME_UNITS;
+            distance = tof * SPEED_OF_LIGHT;
+
+
+            /* Display computed distance on LCD. */
+            printf("DIST: %3.2f m\n", distance);
+
+
+        }
+    }
+    else
+    {
+        /* Clear RX error/timeout events in the DW1000 status register. */
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+        printf("final rx err\n");
+        /* Reset RX to properly reinitialise LDE operation. */
+        dwt_rxreset();
+    }
+
+}
+
+void UwbMsgListener::initiateRanging()
+{
+
+    /* Write frame data to DW1000 and prepare transmission. See NOTE 8 below. */
+    tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0); /* Zero offset in TX buffer. */
+    dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
+
+    /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
+          * set by dwt_setrxaftertxdelay() has elapsed. */
+    dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+
+    /* We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 9 below. */
+    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
+    { };
+    //printf("statusReg h: %x mask: %x\n",status_reg,(SYS_STATUS_RXFCG | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR));
+
+    /* Increment frame sequence number after transmission of the poll message (modulo 256). */
+    frame_seq_nb++;
+
+    if (status_reg & SYS_STATUS_RXFCG)
+    {
+        uint32 frame_len;
+
+        /* Clear good RX frame event and TX frame sent in the DW1000 status register. */
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG | SYS_STATUS_TXFRS);
+
+        /* A frame has been received, read it into the local buffer. */
+        frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_MASK;
+        if (frame_len <= RX_BUF_LEN)
+        {
+            dwt_readrxdata(rx_buffer, frame_len, 0);
+        }
+
+        /* Check that the frame is the expected response from the companion "DS TWR responder" example.
+              * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
+        rx_buffer[ALL_MSG_SN_IDX] = 0;
+        if (memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0)
+        {
+            uint32 final_tx_time;
+            int ret;
+            printf("response received\n");
+            /* Retrieve poll transmission and response reception timestamp. */
+            poll_tx_ts = get_tx_timestamp_u64();
+            resp_rx_ts = get_rx_timestamp_u64();
+
+            /* Compute final message transmission time. See NOTE 10 below. */
+            final_tx_time = (resp_rx_ts + (RESP_RX_TO_FINAL_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+            dwt_setdelayedtrxtime(final_tx_time);
+
+            /* Final TX timestamp is the transmission time we programmed plus the TX antenna delay. */
+            final_tx_ts = (((uint64)(final_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
+
+            /* Write all timestamps in the final message. See NOTE 11 below. */
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_POLL_TX_TS_IDX], poll_tx_ts);
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_RESP_RX_TS_IDX], resp_rx_ts);
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_FINAL_TX_TS_IDX], final_tx_ts);
+
+            /* Write and send final message. See NOTE 8 below. */
+            tx_final_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+            dwt_writetxdata(sizeof(tx_final_msg), tx_final_msg, 0); /* Zero offset in TX buffer. */
+            dwt_writetxfctrl(sizeof(tx_final_msg), 0, 1); /* Zero offset in TX buffer, ranging. */
+            ret = dwt_starttx(DWT_START_TX_DELAYED);
+
+            /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. See NOTE 12 below. */
+            if (ret == DWT_SUCCESS)
+            {
+
+                /* Poll DW1000 until TX frame sent event set. See NOTE 9 below. */
+                while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS))
+                { };
+
+                /* Clear TXFRS event. */
+                dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS);
+
+                /* Increment frame sequence number after transmission of the final message (modulo 256). */
+                frame_seq_nb++;
+            }
+            else
+            {
+                printf("final tx timeout/err\n ");
+
+            }
+        }
+    }
+    else
+    {
+        /* Clear RX error/timeout events in the DW1000 status register. */
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+        printf("response rx timeout/err \n");
+        //printf("statusRegafter clear h: %x\n",status_reg);
+
+        /* Reset RX to properly reinitialise LDE operation. */
+        dwt_rxreset();
+    }
+
+    /* Execute a delay between ranging exchanges. */
+    deca_sleep(RNG_DELAY_MS);
+}
 
 void UwbMsgListener::stopSending()
 {
-	isSending = 0;
-	}
-	
+    isSending = 0;
+}
+
 void UwbMsgListener::waitUwbThreadsEnd(){
-	isReceivingThreadRunning =0;
-	if(pthread_join(receivingThreadUwb,NULL)){
-		printf("error joining receiving thread");
-		}else
-		{
-		printf("joining receiving thread successful");
+    isReceivingThreadRunning =0;
+    if(pthread_join(receivingThreadUwb,NULL)){
+        printf("error joining receiving thread");
+    }else
+    {
+        printf("joining receiving thread successful");
 
-			}
-	if(pthread_join(sendingThreadUwb,NULL)){
-		printf("error joining receiving thread");
-		}else
-		{
-		printf("joining sending thread successful");
+    }
+    if(pthread_join(sendingThreadUwb,NULL)){
+        printf("error joining receiving thread");
+    }else
+    {
+        printf("joining sending thread successful");
 
-			}
-	
-	
-	}
-	
+    }
+
+
+}
+
 void UwbMsgListener::startReceiving()
 {
     int iret1 = pthread_create( &receivingThreadUwb, NULL,receivingLoop , 0);
@@ -452,18 +702,18 @@ void UwbMsgListener::startReceiving()
         fprintf(stderr,"Error creating receiving thread return code: %d\n",iret1);
         return;//exit(-1);
     }
-cout<< "started receiving thread\n";
+    cout<< "started receiving thread\n";
 }
 void UwbMsgListener::startSending()
 {
     int iret1 = pthread_create( &sendingThreadUwb, NULL,sendingLoop , 0);
-isSending = 1;
+    isSending = 1;
     if(iret1)
     {
         fprintf(stderr,"Error creating sending thread return code: %d\n",iret1);
         return;//exit(-1);
     }
-cout<< "started sending thread\n";
+    cout<< "started sending thread\n";
 }
 
 
