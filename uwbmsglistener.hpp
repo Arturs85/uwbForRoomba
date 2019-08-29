@@ -18,6 +18,7 @@ extern "C" {
 }
 using namespace std;
 	typedef struct RawTxMessage {char macHeader[10]; char data[127]; int dataLength; } RawTxMessage;
+typedef unsigned long long uint64;
 
 class UwbMsgListener
 {
@@ -58,6 +59,9 @@ static void addToTxDeque(std::string msgText);
 static void addToRangingInitDeque(int rangingTarget);
 static void respondToRangingRequest();
 static void initiateRanging();
+
+//static void final_msg_get_ts(uint8 *ts_field, uint64 ts);
+
 
 static void* sendingLoop(void* arg);
 void waitUwbThreadsEnd();

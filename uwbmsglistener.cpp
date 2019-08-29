@@ -32,6 +32,9 @@
 /* Example application name and version to display on LCD screen. */
 #define APP_NAME "UWB Listener"
 #define SLEEP_BETWEEN_SENDING_US 100000
+/* Inter-ranging delay period, in milliseconds. */
+#define RNG_DELAY_MS 1000
+
 /* Default communication configuration. We use here EVK1000's default mode (mode 3). */
 static dwt_config_t config = {
     2,               /* Channel number. */
@@ -108,22 +111,26 @@ static uint32 status_reg = 0;
 /* Timestamps of frames transmission/reception.
  * As they are 40-bit wide, we need to define a 64-bit int type to handle them. */
 typedef signed long long int64;
-typedef unsigned long long uint64;
+//typedef unsigned long long uint64;
 static uint64 poll_rx_ts;
 static uint64 resp_tx_ts;
 static uint64 final_rx_ts;
-
+//from initiator.c
+static uint64 poll_tx_ts;
+static uint64 resp_rx_ts;
+static uint64 final_tx_ts;
 /* Speed of light in air, in metres per second. */
 #define SPEED_OF_LIGHT 299702547
 
 /* Hold copies of computed time of flight and distance here for reference so that it can be examined at a debug breakpoint. */
 static double tof;
-static double distance;
+static double twrDistance;
 
 /* Declaration of static functions. */
 static uint64 get_tx_timestamp_u64(void);
 static uint64 get_rx_timestamp_u64(void);
 static void final_msg_get_ts(const uint8 *ts_field, uint32 *ts);
+static void final_msg_set_ts(uint8 *ts_field, uint64 ts);
 
 
 pthread_mutex_t UwbMsgListener::txBufferLock = PTHREAD_MUTEX_INITIALIZER;
@@ -494,7 +501,7 @@ void UwbMsgListener::respondToRangingRequest()
     if (ret == DWT_ERROR)
     {
         printf("tx1 err\n");
-        continue;
+        return; // replaced continue with return, to be tested
     }
 
     /* Poll for reception of expected "final" frame or error/timeout. See NOTE 8 below. */
@@ -512,7 +519,7 @@ void UwbMsgListener::respondToRangingRequest()
         printf("final msg received\n");
 
         /* A frame has been received, read it into the local buffer. */
-        frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_MASK;
+       uint32 frame_len = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_MASK;
         if (frame_len <= RX_BUF_LEN)
         {
             dwt_readrxdata(rx_buffer, frame_len, 0);
@@ -548,11 +555,11 @@ void UwbMsgListener::respondToRangingRequest()
             tof_dtu = (int64)((Ra * Rb - Da * Db) / (Ra + Rb + Da + Db));
 
             tof = tof_dtu * DWT_TIME_UNITS;
-            distance = tof * SPEED_OF_LIGHT;
+            twrDistance = tof * SPEED_OF_LIGHT;
 
 
-            /* Display computed distance on LCD. */
-            printf("DIST: %3.2f m\n", distance);
+            /* Display computed twrDistance on LCD. */
+            printf("DIST: %3.2f m\n", twrDistance);
 
 
         }
@@ -796,7 +803,7 @@ static uint64 get_rx_timestamp_u64(void)
  *
  * @return none
  */
-static void final_msg_set_ts(uint8 *ts_field, uint64 ts)
+ static void final_msg_set_ts(uint8 *ts_field, uint64 ts)
 {
     int i;
     for (i = 0; i < FINAL_MSG_TS_LEN; i++)
