@@ -54,7 +54,7 @@ static dwt_config_t config = {
 static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
 static uint8 tx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
 static uint8 rx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-//static uint8 tx_poll_msg[] = {0x41, 0x88, 0x41, 0xCA, 0xDE, 'V', 'I', 'A', 'B', 0x21, 0, 0};
+static uint8 tx_poll_mod_msg[] = {0x41, 0x88, 0x41, 0xCA, 0xDE, 'V', 'I', 'A', 'B', 0x21, 0, 0};
 //from initiaator.c
 static uint8 tx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
 static uint8 rx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
@@ -86,24 +86,24 @@ static uint32 status_reg = 0;
 /* Delay between frames, in UWB microseconds. See NOTE 4 below. */
 /* This is the delay from Frame RX timestamp to TX reply timestamp used for calculating/setting the DW1000's delayed TX function. This includes the
  * frame length of approximately 2.46 ms with above configuration. */
-#define POLL_RX_TO_RESP_TX_DLY_UUS 5000//2800//2600
+#define POLL_RX_TO_RESP_TX_DLY_UUS 7000//2800//2600
 /* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
 #define RESP_TX_TO_FINAL_RX_DLY_UUS 700//500
 /* Receive final timeout. See NOTE 5 below. */
 #define FINAL_RX_TIMEOUT_UUS 5000//3300
 /* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
-#define PRE_TIMEOUT 64
+#define PRE_TIMEOUT 128
 
 //from initiator.c
 /* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
 #define POLL_TX_TO_RESP_RX_DLY_UUS 1000//150
 /* This is the delay from Frame RX timestamp to TX reply timestamp used for calculating/setting the DW1000's delayed TX function. This includes the
  * frame length of approximately 2.66 ms with above configuration. */
-#define RESP_RX_TO_FINAL_TX_DLY_UUS 5000//3100
+#define RESP_RX_TO_FINAL_TX_DLY_UUS 7000//3100
 /* Receive response timeout. See NOTE 5 below. */
-#define RESP_RX_TIMEOUT_UUS 5000//2900//2700
+#define RESP_RX_TIMEOUT_UUS 7000//2900//2700
 /* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
-#define PRE_TIMEOUT 64//8
+//#define PRE_TIMEOUT 64//8
 
 #define TX_ANT_DLY 16436
 #define RX_ANT_DLY 16436
@@ -449,7 +449,7 @@ void UwbMsgListener::addToTxDeque(std::string msgText){
     RawTxMessage msg;
 
     tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-    memcpy(msg.macHeader,tx_poll_msg,ALL_MSG_COMMON_LEN);
+    memcpy(msg.macHeader,tx_poll_mod_msg,ALL_MSG_COMMON_LEN);
 
     snprintf(msg.data,30," --message nr %d",frame_seq_nb++);
     
@@ -577,7 +577,12 @@ void UwbMsgListener::respondToRangingRequest()
 
 void UwbMsgListener::initiateRanging()
 {
+  dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+    dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+    dwt_setpreambledetecttimeout(PRE_TIMEOUT);
 
+  //  dwt_setpreambledetecttimeout(PRE_TIMEOUT);
+    
     /* Write frame data to DW1000 and prepare transmission. See NOTE 8 below. */
     tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0); /* Zero offset in TX buffer. */
