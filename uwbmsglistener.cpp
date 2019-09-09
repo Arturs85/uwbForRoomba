@@ -39,15 +39,16 @@
 static dwt_config_t config = {
     2,               /* Channel number. */
     DWT_PRF_64M,     /* Pulse repetition frequency. */
-    DWT_PLEN_1024,   /* Preamble length. Used in TX only. */
-    DWT_PAC32,       /* Preamble acquisition chunk size. Used in RX only. */
+    DWT_PLEN_2048,//1024,   /* Preamble length. Used in TX only. */
+    DWT_PAC64,       /* Preamble acquisition chunk size. Used in RX only. */
     9,               /* TX preamble code. Used in TX only. */
     9,               /* RX preamble code. Used in RX only. */
     1,               /* 0 to use standard SFD, 1 to use non-standard SFD. */
-    DWT_BR_110K,     /* Data rate. */
+     DWT_BR_110K,//DWT_BR_6M8,//DWT_BR_110K,     /* Data rate. */
     DWT_PHRMODE_STD, /* PHY header mode. */
-    (1025 + 64 - 32) /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
+    (2049 + 64 - 64) /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
 };
+
 
 
 /* Frames used in the ranging process. See NOTE 2 below. */
@@ -90,18 +91,18 @@ static uint32 status_reg = 0;
 /* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
 #define RESP_TX_TO_FINAL_RX_DLY_UUS 700//500
 /* Receive final timeout. See NOTE 5 below. */
-#define FINAL_RX_TIMEOUT_UUS 7000//3300
+#define FINAL_RX_TIMEOUT_UUS 9000//3300
 /* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
-#define PRE_TIMEOUT 128
+#define PRE_TIMEOUT 256
 
 //from initiator.c
 /* This is the delay from the end of the frame transmission to the enable of the receiver, as programmed for the DW1000's wait for response feature. */
-#define POLL_TX_TO_RESP_RX_DLY_UUS 1000//150
+#define POLL_TX_TO_RESP_RX_DLY_UUS 200//150
 /* This is the delay from Frame RX timestamp to TX reply timestamp used for calculating/setting the DW1000's delayed TX function. This includes the
  * frame length of approximately 2.66 ms with above configuration. */
 #define RESP_RX_TO_FINAL_TX_DLY_UUS 7000//3100
 /* Receive response timeout. See NOTE 5 below. */
-#define RESP_RX_TIMEOUT_UUS 7000//2900//2700
+#define RESP_RX_TIMEOUT_UUS 9000//2900//2700
 /* Preamble timeout, in multiple of PAC size. See NOTE 6 below. */
 //#define PRE_TIMEOUT 64//8
 
@@ -199,6 +200,7 @@ void UwbMsgListener::readDeviceData(){
 
     uint16 p = 0x1234;
     //dwt_setpanid(p);
+    dwt_write32bitoffsetreg(0x1E, TX_POWER_LEN, 0x1f1f1f1f) ;
 
     //dwt_write16bitoffsetreg(0x03, PANADR_PAN_ID_OFFSET, p) ;
     usleep(1);
